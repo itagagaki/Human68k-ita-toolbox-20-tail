@@ -32,9 +32,10 @@ TAIL(1)        Human68k ITA TOOLBOX User's Manual         TAIL(1)
      末尾に不完全行（最後の改行からファイルの終わりまでのデータ）
      があれば，それも 1行として数えます．
 
-     count を + に続けて指定すると，file の先頭から count 分が捨
-     てられ，残りすべてが出力されます．file の長さが count 以下で
-     ある場合は何も出力されません．
+     count を + に続けて指定すると，file の先頭から count-1 分が
+     捨てられ，残りすべてが出力されます．たとえば +5l では 5行目
+     以降が出力されます．file の長さが count-1 以下である場合は何
+     も出力されません．
 
      count のもう 1つの指定形式 -[count]r では，file の末尾の
      count 行が逆順に出力されます．count を省略すると file のすべ
@@ -151,14 +152,14 @@ TAIL(1)        Human68k ITA TOOLBOX User's Manual         TAIL(1)
      は限界があります．
 
 バージョン
-     1.0
+     1.1
 
 制作・著作
      Copyright(C)1993 by 板垣 史彦 (Itagaki Fumihiko)
 
 
 
-1.0                 Last change: 13 Feb 1993     Itagaki Fumihiko
+1.1                 Last change: 24 Feb 1993     Itagaki Fumihiko
 
 
 

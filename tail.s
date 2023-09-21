@@ -2,6 +2,11 @@
 *
 * Itagaki Fumihiko 07-Feb-93  Create.
 * 1.0
+* Itagaki Fumihiko 19-Feb-93  標準入力が切り替えられていても端末から^Cや^Sなどが効くようにした
+* Itagaki Fumihiko 19-Feb-93  シークできないデバイスからの -<N>l が正常に動作しないバグを修正
+* Itagaki Fumihiko 22-Feb-93  +<N> の結果が 1 ずれているバグ（仕様のバグ）を修正
+* Itagaki Fumihiko 24-Feb-93  シーク可能かどうかの判定方法を変更
+* 1.1
 *
 * Usage: tail [ -qvBCZ ] { [ [{+-}<N>[ckl]] [-[<N>]r] [ -- ] [ <ファイル> ] } ...
 
@@ -15,6 +20,8 @@
 .xref strlen
 .xref strfor1
 .xref strip_excessive_slashes
+
+IMPLEMENT_FOLLOW	equ	0
 
 STACKSIZE	equ	2048
 
@@ -34,8 +41,9 @@ FLAG_C			equ	3	*  -C
 FLAG_Z			equ	4	*  -Z
 FLAG_from_top		equ	5
 FLAG_byte_unit		equ	6
-FLAG_reverse		equ	7
-FLAG_add_newline	equ	8
+FLAG_follow		equ	7
+FLAG_reverse		equ	8
+FLAG_add_newline	equ	9
 
 .text
 
@@ -51,6 +59,8 @@ start1:
 		move.l	a0,-(a7)
 		DOS	_SETBLOCK
 		addq.l	#8,a7
+	*
+		move.l	#-1,stdin
 	*
 	*  引数並び格納エリアを確保する
 	*
@@ -222,41 +232,56 @@ do_files:
 inpbuf_ok:
 		move.l	d0,inpbuf
 	*
+	*  標準入力を切り替える
+	*
+		clr.w	-(a7)				*  標準入力を
+		DOS	_DUP				*  複製したハンドルから入力し，
+		addq.l	#2,a7
+		move.l	d0,stdin
+		bmi	start_do_files
+
+		clr.w	-(a7)
+		DOS	_CLOSE				*  標準入力はクローズする．
+		addq.l	#2,a7				*  こうしないと ^C や ^S が効かない
+start_do_files:
+	*
 	*  開始
 	*
 		tst.l	d7
-		beq	no_file_arg
+		beq	do_stdin
 for_file_loop:
+		subq.l	#1,d7
 		movea.l	a0,a3
 		bsr	strfor1
 		exg	a0,a3
 		cmpi.b	#'-',(a0)
-		bne	for_file_1
+		bne	do_file
 
 		tst.b	1(a0)
-		bne	for_file_1
+		bne	do_file
+do_stdin:
+		lea	msg_stdin(pc),a0
+		move.l	stdin,d1
+		bmi	open_fail
 
-		bsr	do_stdin
+		bsr	tail_one
 		bra	for_file_continue
 
-for_file_1:
+do_file:
 		bsr	strip_excessive_slashes
-		lea	msg_open_fail(pc),a2
 		clr.w	-(a7)
 		move.l	a0,-(a7)
 		DOS	_OPEN
 		addq.l	#6,a7
-		tst.l	d0
-		bmi	werror_exit_2
+		move.l	d0,d1
+		bmi	open_fail
 
-		move.w	d0,d1
-		bsr	dofile
+		bsr	tail_one
 		move.w	d1,-(a7)
 		DOS	_CLOSE
 		addq.l	#2,a7
 for_file_continue:
 		movea.l	a3,a0
-		subq.l	#1,d7
 		bsr	parse_count
 		tst.l	d7
 		beq	all_done
@@ -264,59 +289,87 @@ for_file_continue:
 		lea	msg_header1(pc),a1
 		bra	for_file_loop
 
-no_file_arg:
-		bsr	do_stdin
 all_done:
-		moveq	#0,d0
+		moveq	#0,d6
 exit_program:
-		move.w	d0,-(a7)
+		move.l	stdin,d0
+		bmi	exit_program_1
+
+		clr.w	-(a7)				*  標準入力を
+		move.w	d0,-(a7)			*  元に
+		DOS	_DUP2				*  戻す．
+		DOS	_CLOSE				*  複製はクローズする．
+exit_program_1:
+		move.w	d6,-(a7)
 		DOS	_EXIT2
+
+open_fail:
+		lea	msg_open_fail(pc),a2
+		bra	werror_exit_2
 ****************************************************************
 parse_count:
 parse_count_loop:
 		tst.l	d7
 		beq	parse_count_done
 
+		move.b	1(a0),d0
 		cmpi.b	#'+',(a0)
-		beq	parse_count_1
+		beq	parse_count_0
 
 		cmpi.b	#'-',(a0)
 		bne	parse_count_done
 
-		cmpi.b	#'r',1(a0)
-		bne	parse_count_1
+		cmp.b	#'r',d0
+		bne	parse_count_0
 
 		tst.b	2(a0)
 		bne	parse_count_break
 
 		moveq	#-1,d1
-		addq.l	#1,a0
-		bra	parse_count_3
+		sf	d0				*  skip atou
+		bra	parse_count_2
 
+parse_count_0:
+.if IMPLEMENT_FOLLOW
+		cmp.b	#'f',d0
+		bne	parse_count_1
+
+		tst.b	2(a0)
+		bne	parse_count_break
+
+		moveq	#10,d1
+		sf	d0				*  skip atou
+		bra	parse_count_2
+.endif
 parse_count_1:
-		move.b	1(a0),d0
 		bsr	isdigit
 		bne	parse_count_break
 
+		st	d0				*  do atou
+parse_count_2:
 		bclr	#FLAG_from_top,d5
 		cmpi.b	#'-',(a0)
-		beq	parse_count_2
+		beq	parse_count_n
 
 		bset	#FLAG_from_top,d5
-parse_count_2:
+parse_count_n:
 		addq.l	#1,a0
+		tst.b	d0
+		beq	parse_count_unit
+
 		bsr	atou
 		bne	bad_count
-parse_count_3:
+parse_count_unit:
 		move.l	d1,count
 		subq.l	#1,d7
 		bclr	#FLAG_byte_unit,d5
+		bclr	#FLAG_follow,d5
 		bclr	#FLAG_reverse,d5
-		move.b	(a0),d0
-		beq	parse_count_continue
+		move.b	(a0)+,d0
+		beq	parse_count_loop
 
 		cmp.b	#'l',d0
-		beq	parse_count_unit_ok
+		beq	parse_count_5
 
 		btst	#FLAG_from_top,d5
 		bne	parse_count_4
@@ -327,7 +380,7 @@ parse_count_3:
 parse_count_4:
 		bset	#FLAG_byte_unit,d5
 		cmp.b	#'c',d0
-		beq	parse_count_unit_ok
+		beq	parse_count_5
 
 		cmp.b	#'k',d0
 		bne	bad_count
@@ -338,9 +391,17 @@ parse_count_4:
 		lsl.l	#8,d1
 		lsl.l	#2,d1
 		move.l	d1,count
+parse_count_5:
+.if IMPLEMENT_FOLLOW
+		move.b	(a0)+,d0
+		beq	parse_count_loop
+
+		cmp.b	#'f',d0
+		bne	bad_count
+
+		bset	#FLAG_follow,d5
+.endif
 parse_count_unit_ok:
-		addq.l	#1,a0
-parse_count_continue:
 		tst.b	(a0)+
 		beq	parse_count_loop
 bad_count:
@@ -349,7 +410,7 @@ bad_count:
 usage:
 		lea	msg_usage(pc),a0
 		bsr	werror
-		moveq	#1,d0
+		moveq	#1,d6
 		bra	exit_program
 
 parse_count_break:
@@ -367,15 +428,12 @@ parse_count_break:
 parse_count_done:
 		rts
 ****************************************************************
-* dofile
+* tail_one
 ****************************************************************
-do_stdin:
-		lea	msg_stdin(pc),a0
-		moveq	#0,d1
-dofile:
+tail_one:
 		sf	cr_pending
 		tst.b	show_header
-		beq	dofile1
+		beq	tail_one_1
 
 		move.l	a0,-(a7)
 		movea.l	a1,a0
@@ -385,9 +443,9 @@ dofile:
 		lea	msg_header3(pc),a0
 		bsr	puts
 		movea.l	(a7)+,a0
-dofile1:
+tail_one_1:
 		bsr	check_input_device
-		bsr	dofile2
+		bsr	do_tail_one
 		bsr	flush_cr
 flush_outbuf:
 		move.l	d0,-(a7)
@@ -419,25 +477,27 @@ flush_cr:
 		move.l	(a7)+,d0
 flush_cr_return:
 		rts
-****************
-dofile2:
+****************************************************************
+do_tail_one:
 		btst	#FLAG_from_top,d5
 		beq	tail_FromBot
 ****************
 tail_FromTop:
+		*
+		*  count-1unit読みとばす
+		*
 		move.l	count,d2			*  D2.L : カウント
-		beq	output_remainder_ReadThenOutput
-		*
-		*  count行読みとばす
-		*
+		subq.l	#1,d2
+		bls	output_remainder_ReadThenOutput
+
 		sf	eof_detected
 skip_head_loop:
 		tst.b	eof_detected
-		bne	dofile1_done
+		bne	do_tail_one_done
 
 		bsr	read_some
 		bsr	trunc				*  D4.L := 有効バイト数
-		beq	dofile1_done
+		beq	do_tail_one_done
 
 		movea.l	inpbuf,a1
 		btst	#FLAG_byte_unit,d5
@@ -467,13 +527,12 @@ skip_head_done:
 		bra	output_remainder_OutputThenRead
 ****************
 tail_FromBot:
-		tst.l	count
-		beq	dofile1_done
-
-		tst.b	input_is_block
+		tst.b	can_seek
 		beq	tail_FromBot_Unseekable
 ****************
 tail_FromBot_Seekable:
+		tst.l	count
+		beq	do_tail_one_done
 		*
 		*  論理的なファイルの終わりにシークする
 		*
@@ -517,7 +576,7 @@ tail_FromBot_Seekable_Line:
 		moveq	#0,d3				*  D3.L : 先走り量
 		move.l	count,d4			*  D4.L : count
 		bsr	tail_file_lines_read
-		beq	dofile1_done
+		beq	do_tail_one_done
 
 		btst	#FLAG_reverse,d5
 		bne	tail_FromBot_Seekable_ReverseLine
@@ -529,7 +588,7 @@ tail_FromBot_Seekable_Line:
 tail_FromBot_Seekable_Line_1:
 		move.l	d3,d0
 		bsr	backward_lines
-		bne	dofile1_done			*  この先にはもう無い
+		bne	do_tail_one_done			*  この先にはもう無い
 tail_FromBot_Seekable_Line_loop:
 		bsr	tail_file_lines_read
 		beq	output_remainder_ReadThenOutput
@@ -575,7 +634,7 @@ Seekable_ReverseLine_continue:
 		bclr	#FLAG_add_newline,d5
 Seekable_ReverseLine_1:
 		bsr	put_backward_lines
-		beq	dofile1_done
+		beq	do_tail_one_done
 Seekable_ReverseLine_ReadLoop:
 		bsr	tail_file_lines_read
 		move.l	d3,d0
@@ -616,11 +675,11 @@ Seekable_ReverseLine_PutDone:
 		bsr	check_newline
 		move.l	(a7)+,d4
 		subq.l	#1,d4
-		beq	dofile1_done
+		beq	do_tail_one_done
 
 		bsr	tail_file_lines_read
 		move.l	d3,d0
-		beq	dofile1_done
+		beq	do_tail_one_done
 
 		bra	Seekable_ReverseLine_continue
 ****************
@@ -684,14 +743,16 @@ read_to_buffer_eof:
 		move.l	d0,d2
 		movea.l	inpbuf,a1
 read_to_buffer_done:
-		st	eof_detected
+		tst.l	count
+		beq	do_tail_one_done
 
+		st	eof_detected
 		btst	#FLAG_byte_unit,d5
 		bne	tail_FromBot_Unseekable_Byte
 ****************
 tail_FromBot_Unseekable_Line:
 		tst.l	d2
-		beq	dofile1_done
+		beq	do_tail_one_done
 
 		movea.l	a1,a2
 		move.l	count,d4			*  D4.L : count
@@ -716,7 +777,7 @@ tail_FromBot_Unseekable_Line_2:
 		move.l	a1,d0
 		sub.l	inpbuf,d0
 		bsr	backward_lines
-		bne	dofile1_done
+		bne	do_tail_one_done
 
 		tst.b	d3
 		beq	tail_FromBot_Unseekable_Line_3
@@ -730,6 +791,7 @@ tail_FromBot_Unseekable_Line_2:
 		movem.l	(a7)+,d0/a1
 		beq	insufficient_memory
 tail_FromBot_Unseekable_Line_3:
+		suba.l	d0,a1
 		move.l	d0,d4
 		bra	output_remainder_OutputThenRead
 ****************
@@ -748,7 +810,7 @@ Unseekable_RevLine_1:
 		bsr	put_backward_lines
 		move.l	(a7)+,d2
 		tst.l	d4
-		beq	dofile1_done
+		beq	do_tail_one_done
 
 		tst.b	d3
 		beq	Unseekable_RevLine_last
@@ -774,11 +836,11 @@ Unseekable_RevLine_1:
 		movem.l	(a7)+,d0/d4/a1	* A2->A1
 		bsr	check_newline
 		subq.l	#1,d4
-		beq	dofile1_done
+		beq	do_tail_one_done
 
 		moveq	#-1,d2
 		bsr	put_backward_lines
-		beq	dofile1_done
+		beq	do_tail_one_done
 		bra	insufficient_memory
 
 Unseekable_RevLine_last:
@@ -820,7 +882,7 @@ tail_FromBot_Unseekable_Byte_3:
 		move.l	d4,d0
 		bsr	write
 tail_FromBot_Unseekable_Byte_4:
-dofile1_done:
+do_tail_one_done:
 		rts
 *****************************************************************
 backward_lines:
@@ -1077,7 +1139,7 @@ werror_exit_2:
 		bsr	werror_myname_and_msg
 		movea.l	a2,a0
 		bsr	werror
-		moveq	#2,d0
+		moveq	#2,d6
 		bra	exit_program
 *****************************************************************
 * trunc - inpbuf をスキャンし，EOF があったら切り詰める．
@@ -1137,6 +1199,7 @@ trunc_return:
 * RETURN
 *      D0.L   先頭からのオフセット
 *             負ならばOSのエラーコード
+*      CCR    TST.L D0
 *****************************************************************
 seek_to_phigical_eof:
 		move.w	#2,-(a7)
@@ -1159,9 +1222,25 @@ seeksub:
 * RETURN
 *      D0.L   先頭からのオフセット
 *             負ならばOSのエラーコード
+*      CCR    TST.L D0
 *****************************************************************
 seek_relative:
 		move.w	#1,-(a7)
+		bra	seeksub
+*****************************************************************
+* seek_absolute - 絶対位置にシークする
+*
+* CALL
+*      D0.L   シーク位置（先頭からのオフセット）
+*      D1.W   ファイル・ハンドル
+*
+* RETURN
+*      D0.L   先頭からのオフセット
+*             負ならばOSのエラーコード
+*      CCR    TST.L D0
+*****************************************************************
+seek_absolute:
+		clr.w	-(a7)
 		bra	seeksub
 *****************************************************************
 * check_input_device - 入力デバイスをチェックする
@@ -1178,15 +1257,28 @@ check_input_device:
 		sf	ignore_from_ctrld
 		move.w	d1,d0
 		bsr	is_chrdev
-		seq	input_is_block
-		beq	check_input_device_done		*  -- ブロック・デバイス
+		beq	check_input_device_seekable	*  -- ブロック・デバイス
 
 		btst	#5,d0				*  '0':cooked  '1':raw
-		bne	check_input_device_done
+		bne	check_input_device_seekable
 
 		st	ignore_from_ctrlz
 		st	ignore_from_ctrld
-check_input_device_done:
+check_input_device_seekable:
+		st	can_seek
+		moveq	#1,d0
+		bsr	seek_absolute
+		cmp.l	#1,d0
+		beq	check_input_device_seekable_1
+
+		sf	can_seek
+check_input_device_seekable_1:
+		moveq	#0,d0
+		bsr	seek_absolute
+		beq	check_input_device_seekable_2
+
+		sf	can_seek
+check_input_device_seekable_2:
 		rts
 *****************************************************************
 is_chrdev:
@@ -1213,7 +1305,7 @@ insufficient_memory:
 		lea	msg_no_memory(pc),a0
 		bsr	werror_myname_and_msg
 exit_3:
-		moveq	#3,d0
+		moveq	#3,d6
 		bra	exit_program
 *****************************************************************
 werror_myname:
@@ -1245,7 +1337,7 @@ werror_1:
 .data
 
 	dc.b	0
-	dc.b	'## tail 1.0 ##  Copyright(C)1993 by Itagaki Fumihiko',0
+	dc.b	'## tail 1.1 ##  Copyright(C)1993 by Itagaki Fumihiko',0
 
 msg_myname:		dc.b	'tail: ',0
 msg_no_memory:		dc.b	'メモリが足りません',CR,LF,0
@@ -1264,13 +1356,14 @@ msg_usage:		dc.b	CR,LF,'使用法:  tail [-qvBCZ] { [{-+}<N>[ckl]] [-[<N>]r] [--] [
 .bss
 
 .even
+stdin:			ds.l	1
 outbuf_free:		ds.l	1
 count:			ds.l	1
 eofpos:			ds.l	1
 inpbuf:			ds.l	1
 inpbufsize:		ds.l	1
 show_header:		ds.b	1
-input_is_block:		ds.b	1
+can_seek:		ds.b	1
 ignore_from_ctrlz:	ds.b	1
 ignore_from_ctrld:	ds.b	1
 do_buffering:		ds.b	1
