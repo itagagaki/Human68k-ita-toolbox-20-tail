@@ -15,6 +15,11 @@
 * Itagaki Fumihiko 10-Oct-94  +count1-count2 や -count1-count2 の count2 が最初のファイルにしか
 *                             効かないバグを修正
 * 1.3
+* Itagaki Fumihiko 03-Jun-95  出力がcookedモードのキャラクタ・デバイスでない場合や -Bオプション
+*                             が指定されている場合に, +count1-count2 や -count1-count2 の形式で
+*                             count2 が行単位であってもバイト単位として処理されてしまう不具合を
+*                             修正.
+* 1.4
 *
 * Usage: tail [ -qvBCZ ] { [ {+-}<#>[ckl][-<#>[ckl]] | -[<#>]r ] [ -- ] [ <ファイル> ] } ...
 
@@ -937,9 +942,6 @@ output_buf:
 		btst	#FLAG_output_byte_unit,d5
 		bne	output_buf_immediately
 
-		btst	#FLAG_C,d5
-		beq	output_buf_immediately
-
 		btst	#FLAG_head,d5
 		beq	output_buf_putc_loop
 
@@ -951,16 +953,19 @@ output_buf_putc_loop:
 		bcs	output_buf_return_0
 
 		move.b	(a1)+,d0
-		cmp.b	#LF,d0
-		bne	output_buf_putc
+		btst	#FLAG_C,d5
+		beq	output_buf_putc_2
 
-		st	cr_pending(a6)			*  LFの前にCRをはかせるため
+			cmp.b	#LF,d0
+			bne	output_buf_putc
+
+			st	cr_pending(a6)			*  LFの前にCRをはかせるため
 output_buf_putc:
-		bsr	flush_cr
-		cmp.b	#CR,d0
-		seq	cr_pending(a6)
-		beq	output_buf_putc_loop
-
+			bsr	flush_cr
+			cmp.b	#CR,d0
+			seq	cr_pending(a6)
+			beq	output_buf_putc_loop
+output_buf_putc_2:
 		bsr	putc
 		btst	#FLAG_head,d5
 		beq	output_buf_putc_loop
@@ -1425,7 +1430,7 @@ werror_1:
 .data
 
 	dc.b	0
-	dc.b	'## tail 1.3 ##  Copyright(C)1993-95 by Itagaki Fumihiko',0
+	dc.b	'## tail 1.4 ##  Copyright(C)1993-95 by Itagaki Fumihiko',0
 
 msg_myname:		dc.b	'tail: ',0
 msg_no_memory:		dc.b	'メモリが足りません',CR,LF,0
