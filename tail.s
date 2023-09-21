@@ -12,6 +12,9 @@
 * Itagaki Fumihiko 29-Aug-94  Brush up.
 * Itagaki Fumihiko 10-Oct-94  countの形式を拡張.
 * 1.2
+* Itagaki Fumihiko 10-Oct-94  +count1-count2 や -count1-count2 の count2 が最初のファイルにしか
+*                             効かないバグを修正
+* 1.3
 *
 * Usage: tail [ -qvBCZ ] { [ {+-}<#>[ckl][-<#>[ckl]] | -[<#>]r ] [ -- ] [ <ファイル> ] } ...
 
@@ -296,7 +299,7 @@ for_file_continue:
 		bra	for_file_loop
 
 all_done:
-		moveq	#0,d6
+		moveq	#0,d1
 exit_program:
 		move.l	stdin(a6),d0
 		bmi	exit_program_1
@@ -306,7 +309,7 @@ exit_program:
 		DOS	_DUP2				*  戻す．
 		DOS	_CLOSE				*  複製はクローズする．
 exit_program_1:
-		move.w	d6,-(a7)
+		move.w	d1,-(a7)
 		DOS	_EXIT2
 
 open_fail:
@@ -458,7 +461,7 @@ bad_count:
 usage:
 		lea	msg_usage(pc),a0
 		bsr	werror
-		moveq	#1,d6
+		moveq	#1,d1
 		bra	exit_program
 
 parse_count_break:
@@ -493,7 +496,10 @@ tail_one:
 		movea.l	(a7)+,a0
 tail_one_1:
 		bsr	check_input_device
+		move.l	d7,-(a7)
+		move.l	head_count(a6),d7		*  D7.L := head count
 		bsr	do_tail_one
+		move.l	(a7)+,d7
 		bsr	flush_cr
 flush_outbuf:
 		move.l	d0,-(a7)
@@ -937,7 +943,7 @@ output_buf:
 		btst	#FLAG_head,d5
 		beq	output_buf_putc_loop
 
-		tst.l	head_count(a6)
+		tst.l	d7
 output_buf_putc_loop2:
 		beq	output_buf_return_1
 output_buf_putc_loop:
@@ -962,7 +968,7 @@ output_buf_putc:
 		cmp.b	#LF,d0
 		bne	output_buf_putc_loop
 
-		subq.l	#1,head_count(a6)
+		subq.l	#1,d7
 		bra	output_buf_putc_loop2
 
 output_buf_immediately:
@@ -970,10 +976,10 @@ output_buf_immediately:
 		btst	#FLAG_head,d5
 		beq	output_buf_immediately_1
 
-		sub.l	d4,head_count(a6)
+		sub.l	d4,d7
 		bhi	output_buf_immediately_1
 
-		move.l	head_count(a6),d0
+		move.l	d7,d0
 		add.l	d4,d0
 		bsr	write
 output_buf_return_1:
@@ -1217,7 +1223,7 @@ werror_exit_2:
 		bsr	werror_myname_and_msg
 		movea.l	a2,a0
 		bsr	werror
-		moveq	#2,d6
+		moveq	#2,d1
 		bra	exit_program
 *****************************************************************
 * read_some - inpbuf にデータを読み込む
@@ -1387,7 +1393,7 @@ insufficient_memory:
 		lea	msg_no_memory(pc),a0
 		bsr	werror_myname_and_msg
 exit_3:
-		moveq	#3,d6
+		moveq	#3,d1
 		bra	exit_program
 *****************************************************************
 werror_myname:
@@ -1419,7 +1425,7 @@ werror_1:
 .data
 
 	dc.b	0
-	dc.b	'## tail 1.2 ##  Copyright(C)1993-94 by Itagaki Fumihiko',0
+	dc.b	'## tail 1.3 ##  Copyright(C)1993-95 by Itagaki Fumihiko',0
 
 msg_myname:		dc.b	'tail: ',0
 msg_no_memory:		dc.b	'メモリが足りません',CR,LF,0
