@@ -1,0 +1,8 @@
+MANIFEST       このファイル
+README         まず最初にお読み下さい
+NOTICE         版権と許諾についての告示書
+DIRECTORY      ITA製品リスト
+HUPAIR         HUPAIRについてのインフォメーション
+CHANGES        tailのモデルチェンジの履歴
+tail.1         tailのマニュアル
+tail.x         tail実行ファイル
